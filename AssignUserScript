@@ -1,0 +1,141 @@
+#!/bin/bash
+
+####################################################################################################
+#
+# Pulled logged in user information and relay it back to Jamf
+#
+####################################################################################################
+
+scriptLog="/var/log/loggedInUser.log"
+scriptName="Current Logged In User"
+scriptVersion="1.0" 
+exitCode="0"
+
+####################################################################################################
+#
+# Functions
+#
+####################################################################################################
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Client-side Logging
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+function updateScriptLog() {
+    echo "${scriptName} ($scriptVersion): $( date +%Y-%m-%d\ %H:%M:%S ) - ${1}" | tee -a "${scriptLog}"
+}
+
+function preFlight() {
+    updateScriptLog "[PRE-FLIGHT]      ${1}"
+}
+
+function logComment() {
+    updateScriptLog "                  ${1}"
+}
+
+function notice() {
+    updateScriptLog "[NOTICE]          ${1}"
+}
+
+function infoOut() {
+    updateScriptLog "[INFO]            ${1}"
+}
+
+function debugVerbose() {
+    if [[ "$debugMode" == "verbose" ]]; then
+        updateScriptLog "[DEBUG VERBOSE]   ${1}"
+    fi
+}
+
+function debug() {
+    if [[ "$debugMode" == "true" ]]; then
+        updateScriptLog "[DEBUG]           ${1}"
+    fi
+}
+
+function errorOut(){
+    updateScriptLog "[ERROR]           ${1}"
+}
+
+function error() {
+    updateScriptLog "[ERROR]           ${1}"
+    let errorCount++
+}
+
+function warning() {
+    updateScriptLog "[WARNING]         ${1}"
+    let errorCount++
+}
+
+function fatal() {
+    updateScriptLog "[FATAL ERROR]     ${1}"
+    exit 1
+}
+
+function quitOut(){
+    updateScriptLog "[QUIT]            ${1}"
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Pre-flight Check: Validate Logged-in System Accounts
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+function currentLoggedInUser() {
+
+    loggedInUser=$( echo "show State:/Users/ConsoleUser" | scutil | awk '/Name :/ { print $3 }' )
+    infoOut "Current Logged-in User: ${loggedInUser}@tamu.edu"
+
+    networkUser="$(dscl . -read /Users/$loggedInUser | grep "NetworkUser" | cut -d " " -f 2)"
+    infoOut "Network User is $networkUser"
+
+    until { [[ "${loggedInUser}" != "_mbsetupuser" ]] || [[ "${counter}" -gt "180" ]]; } && { [[ "${loggedInUser}" != "loginwindow" ]] || [[ "${counter}" -gt "30" ]]; } ; do
+    infoOut "Logged-in User Counter: ${counter}"
+    currentLoggedInUser
+    sleep 2
+    ((counter++))
+    done
+
+    loggedInUserFullname=$( id -F "${loggedInUser}" )
+    loggedInUserFirstname=$( echo "$loggedInUserFullname" | sed -E 's/^.*, // ; s/([^ ]*).*/\1/' | sed 's/\(.\{25\}\).*/\1…/' | awk '{print ( $0 == toupper($0) ? toupper(substr($0,1,1))substr(tolower($0),2) : toupper(substr($0,1,1))substr($0,2) )}' )
+    loggedInUserLastname=$(echo "$loggedInUserFullname" | sed "s/$loggedInUserFirstname//" |  sed 's/,//g')
+    loggedInUserID=$( id -u "${loggedInUser}" )
+    infoOut "Current Logged-in User First Name: ${loggedInUserFirstname}"
+    infoOut "Current Logged-in User Full Name: ${loggedInUserFirstname} ${loggedInUserLastname}"
+    infoOut "Current Logged-in User ID: ${loggedInUserID}"
+
+}
+
+function recon(){
+    
+    notice "Sending Jamf logged in user information"
+    /usr/local/bin/jamf recon -endUsername "${networkUser}"
+
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Quit Script
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+function quitScript() {
+
+    quitOut "*** QUITTING ***"
+    quitOut "Elapsed Time: $(printf '%dh:%dm:%ds\n' $((SECONDS/3600)) $((SECONDS%3600/60)) $((SECONDS%60)))"
+    quitOut "Goodbye!"
+
+     # Remove dialogLog
+    if [[ -e "${scriptLog}" ]]; then
+            quitOut "Removing ${scriptLog} …"
+        rm "${scriptLog}"
+    fi
+
+    exit "$exitCode"
+
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Start Functions
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+currentLoggedInUser
+recon
+quitScript
